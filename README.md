@@ -2,4 +2,4 @@
 
 #### 1. Titanic: Machine Learning from Disaster (2018.12)
 
-Top 8% on the leaderboard
+Top 7% on the leaderboard
