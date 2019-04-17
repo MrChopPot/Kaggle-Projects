@@ -1,10 +1,12 @@
-### Shelter Animal Outcomes
+### DSBI Final Project: Shelter Animal Outcomes
+# Version 1 by Zixiao Kang
 
 ## 0.Install + Library & Set WD
 #install.packages("tidyverse")
 #install.packages("lubridate")
 #install.packages("magrittr")
 #install.packages("naniar")
+#install.packages("VIM")
 #install.packages("InformationValue")
 #install.packages("caret")
 #install.packages("tictoc")
@@ -12,9 +14,11 @@ library(tidyverse)
 library(lubridate)
 library(magrittr)
 library(naniar)
+library(VIM)
 library(InformationValue)
 library(caret)
 library(tictoc)
+library(pROC)
 
 # Please download the data from 
 # https://www.kaggle.com/c/shelter-animal-outcomes/overview
@@ -33,7 +37,7 @@ sum(is.na(train$AnimalID))
 sum(str_detect(train$AnimalID, "A")) == nrow(train)
 sum(sapply(train$AnimalID, nchar) == 7) == nrow(train)
 
-sum(is.na(test$ID))
+sum(is.na(test$ID)) # It seems like no information inside for those 2 features
 
 # Omit AnimalID & ID because we think they tell us nothing
 shelter <- bind_rows(train[,-1], test[,-1])
@@ -95,10 +99,10 @@ To_NA <- (shelter$SexuponOutcome == "Unknown" | is.na(shelter$SexuponOutcome))
 shelter$Sex <- factor(ifelse(To_NA, NA, shelter$Sex))
 shelter$Intact <- factor(ifelse(To_NA, NA, shelter$Intact))
 
-shelter %$%
+shelter[1:nrow(train),] %$%
   summary(Sex)
 
-shelter %$%
+shelter[1:nrow(train),] %$%
   summary(Intact)
 
 # 2.5 AgeuponOutcome
@@ -122,7 +126,7 @@ shelter %$%
   summary(Age)
 
 # Anomaly Detection
-ggplot(adoption, aes(Age)) +
+ggplot(shelter, aes(Age)) +
   geom_freqpoly()
 
 # 2.6 Breed
@@ -170,6 +174,7 @@ ggplot(adoption[1:nrow(train),], aes(x = Year, y = ..count.., fill = Outcome)) +
   ggtitle("Year VS. Outcome") +
   scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
 
+# It seems like Spring makes the lowest & Winter makes the highest: how about winter vs. others
 ggplot(adoption[1:nrow(train),], aes(x = Season, y = ..count.., fill = Outcome)) +
   geom_bar(stat = "count", position = "fill") +
   ggtitle("Season VS. Outcome") +
@@ -185,16 +190,19 @@ ggplot(adoption[1:nrow(train),], aes(x = Daytime, y = ..count.., fill = Outcome)
   ggtitle("Daytime VS. Outcome") +
   scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
 
+# If Sex is.na, then Outcome is 0
 ggplot(adoption[1:nrow(train),], aes(x = Sex, y = ..count.., fill = Outcome)) +
   geom_bar(stat = "count", position = "fill") +
   ggtitle("Sex VS. Outcome") +
   scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
 
+# If Intact is.na, then Outcome is 0
 ggplot(adoption[1:nrow(train),], aes(x = Intact, y = ..count.., fill = Outcome)) +
   geom_bar(stat = "count", position = "fill") +
   ggtitle("Intact VS. Outcome") +
   scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
 
+# Some changes is needed for Age
 ggplot(adoption[1:nrow(train),], aes(x = as.factor(Age), y = ..count.., fill = Outcome)) +
   geom_bar(stat = "count", position = "fill") +
   ggtitle("Age VS. Outcome") +
@@ -211,27 +219,57 @@ ggplot(adoption[1:nrow(train),], aes(x = Hybrid, y = ..count.., fill = Outcome))
   scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
 
 
-## 4. Feature Selection
-lapply(adoption[1:nrow(train),], function(x) IV(as.factor(x), adoption$Outcome[1:nrow(train)]))
-
-
-## 5. Missing Value Detection & Imputation
+## 4. Missing Value Detection & Imputation
 # Missing Report
 miss_var_summary(adoption)
 
 # Missing Randomness Detection
 #vis_miss(adoption[,c(1:3, 7:11)], cluster = T) 
-#aggr(adoption[,c(1:3, 7:11)])
+aggr(adoption[,c(1:3, 7:11)])
 
-# Missing Imputation(Median, KNN & ...)
+# Missing Imputation (Median/Mode/KNN)
+# Age
+adoption <- adoption %>%
+  mutate(Age = factor(ifelse((adoption$Age %in% c(1, 7) | is.na(adoption$Age)), "Low", 
+                             ifelse(adoption$Age == 30.44, "Medium", "High"))))
+
+# Sex & Intact
+adoption <- adoption %>%
+  mutate(
+    Sex = ifelse(str_detect(shelter$SexuponOutcome, "Male"), "Male", "Female"),
+    Intact = ifelse(str_detect(shelter$SexuponOutcome, "Intact"), "Intact", "Neutered")
+  )
+
+adoption$Sex <- factor(ifelse(To_NA, "Unknown", adoption$Sex))
+adoption$Intact <- factor(ifelse(To_NA, "Unknown", adoption$Intact))
+
+# Plot Again
+ggplot(adoption[1:nrow(train),], aes(x = Age, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Age VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
+
+ggplot(adoption[1:nrow(train),], aes(x = Sex, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Sex VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
+
+ggplot(adoption[1:nrow(train),], aes(x = Intact, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Intact VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
 
 
+## 5. Feature Selection
+lapply(adoption[1:nrow(train),], function(x) IV(as.factor(x), adoption$Outcome[1:nrow(train)]))
+
+  
 ## 6. Modeling (Building & CV & Hyper-tuning)
-temp <- na.omit(adoption[1:nrow(train), ])
+temp <- adoption[1:nrow(train), ]
 
 dmy <- dummyVars(~ ., data = temp[,-ncol(temp)])
 dmy_data <- data.frame(predict(dmy, newdata = temp[,-ncol(temp)]))
-dmy_data <- bind_cols(dmy_data, temp[, ncol(temp)])
+dmy_data <- bind_cols(dmy_data, temp[,ncol(temp)])
 
 index <- createDataPartition(dmy_data$Outcome, p = .70, list = FALSE)
 
@@ -239,7 +277,8 @@ fitControl <- trainControl(method = "repeatedcv",
                            number = 3,
                            repeats = 5,
                            search = "random")
-# XGBoost
+
+# XGBoost (400s; .67)
 tic()
 mod1 <- train(Outcome ~ .,
               data = dmy_data[index,],
@@ -252,7 +291,7 @@ toc()
 pred1 <- predict(mod1, dmy_data[-index,], type = "raw")
 caret::confusionMatrix(pred1, dmy_data[-index,]$Outcome)
 
-# Random Forest
+# Random Forest (1000s; .77)
 tic()
 mod2 <- train(Outcome ~ .,
               data = dmy_data[index,],
@@ -265,7 +304,7 @@ toc()
 pred2 <- predict(mod2, dmy_data[-index,], type = "raw")
 caret::confusionMatrix(pred2, dmy_data[-index,]$Outcome)
 
-# RBF SVM
+# RBF SVM (2000s; .77)
 tic()
 mod3 <- train(Outcome ~ .,
               data = dmy_data[index,],
@@ -278,7 +317,7 @@ toc()
 pred3 <- predict(mod3, dmy_data[-index,], type = "raw")
 caret::confusionMatrix(pred3, dmy_data[-index,]$Outcome)
 
-# Neural Network
+# Neural Network(200s; .77)
 tic()
 mod4 <- train(Outcome ~ .,
               data = dmy_data[index,],
