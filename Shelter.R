@@ -36,6 +36,9 @@ test <- read_csv("test.csv")
 glimpse(train)
 glimpse(test)
 
+dog_breed <- read_csv("dog_breed.csv") # outside source
+glimpse(dog_breed)
+
 tv_row <- 1:nrow(train)
 
 # Make sure do AnimalID & ID contain any valuable information
@@ -260,7 +263,7 @@ length(unique(shelter$Breed)) # That's too many!
 
 # 2.7.1 Mix
 shelter <- shelter %>%
-  mutate(Mix = factor(ifelse((str_detect(shelter$Breed, "(Mix|/)") == T), 
+  mutate(Mix = factor(ifelse((str_detect(shelter$Breed, "(Mix|/)")), 
                              1, 0)))
 
 shelter[tv_row,] %>%  
@@ -317,35 +320,81 @@ shelter[tv_row,] %>%
   summarize(count = n(), prob = mean(Outcome == 1))
 
 ## 2.9 DO some magic
-# 2.9.1 Cat
+# 2.9.0 Preperation
 Cat <- shelter %>%
   filter(Type == "Cat")
+Not_NA_cat <- which(!is.na(Cat$Outcome))
 
-Cat <- Cat %>%
-  mutate(Breed = str_remove(Cat$Breed, "\\sMix$")) %>%
-  mutate(Country = ifelse((str_detect(Cat$Breed, "Domestic") == F) | (str_detect(Cat$Breed, "/") == T), 
-                          "Exotic", Cat$Breed))
-
-Not_NA_cat <- which(is.na(Cat$Outcome) == F)
-
-Cat[Not_NA_cat,] %>%
-  group_by(Country) %>%
-  summarize(count = n(), prob = mean(Outcome == 1))
-
-# 2.9.2 Dog(https://www.trainpetdog.com/dog-breed-size-chart.html)
 Dog <- shelter %>%
   filter(Type == "Dog")
+Not_NA_dog <- which(!is.na(Dog$Outcome))
 
-sum(str_detect(Dog$Breed, "Terrier"))
-sum(str_detect(Dog$Breed, "Chihuahua")) # small
-sum(str_detect(Dog$Breed, "Tzu")) # small
-sum(str_detect(Dog$Breed, "Japanese Chin")) # small
-sum(str_detect(Dog$Breed, "Toy")) # small
-sum(str_detect(Dog$Breed, "Bulldog")) # medium
-sum(str_detect(Dog$Breed, "Pomeranian")) # small
-sum(str_detect(Dog$Breed, "Pekingese")) # small
+# 2.9.1 Breed-Cat
+Cat <- Cat %>%
+  mutate(Breed = str_remove(Cat$Breed, "Mix")) %>%
+  mutate(
+    Hair = ifelse(str_detect(Cat$Breed, "/") | !str_detect(Cat$Breed, "Domestic"), "Exotic", 
+                     ifelse(str_detect(Cat$Breed, "Shorthair"), "Domestic Shorthair", 
+                            ifelse(str_detect(Cat$Breed, "Longhair"), "Domestic Longhair",
+                                              "Domestic Mediumhair")))
+    )
 
-#爬虫-str_detec-打分(有"/"就平均)-分数对应体型
+Cat[Not_NA_cat,] %>%
+  group_by(Hair) %>%
+  summarize(count = n(), prob = mean(Outcome == 1))
+
+# 2.9.2 Breed-Dog
+dog_breed <- dog_breed %>%
+  mutate(Mark1 = ifelse(dog_breed$Point1 == 0, median(dog_breed$Point), dog_breed$Point1),
+         Mark2 = ifelse(dog_breed$Point2 == 0, median(dog_breed$Point), dog_breed$Point2),
+         Mark = (Mark1 + Mark2)/2)
+
+Dog <- Dog %>%
+  mutate(Size = as.factor(dog_breed$Mark))
+
+Dog[Not_NA_dog,] %>%
+  group_by(Size) %>%
+  summarize(count = n(), prob = mean(Outcome == 1))
+
+Dog[Not_NA_dog,] %>%
+  ggplot(aes(x = Size, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Size VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)")) +
+  geom_hline(aes(yintercept = mean(Dog[Not_NA_dog,]$Outcome == 1)))# see the big pic
+# coord_cartesian(ylim=c(5,15))
+
+#lapply(Dog[Not_NA_dog,28], function(x) IV(as.factor(x), Dog$Outcome[Not_NA_dog]))
+
+# 2.9.3 Color-Cat
+Cat <- Cat %>%
+  mutate(Col_cat = ifelse(str_detect(Cat$Color, "(Tabby)(/)"), "T&M",
+                      ifelse(str_detect(Cat$Color, "/"), "Mix",
+                             ifelse(str_detect(Cat$Color, "Tabby"), "Tabby",
+                                    "Simple")))
+         )
+
+Cat[Not_NA_cat,] %>%
+  group_by(Col_cat) %>%
+  summarize(count = n(), prob = mean(Outcome == 1))
+
+# 2.9.4 Color-Dog
+temp <- c(as.vector(unlist(str_split(Dog[Dog$Hybrid==1,]$Color, "/"))), 
+                    as.vector(Dog[Dog$Hybrid==0,]$Color))
+table(temp)
+
+Dog <- Dog %>%
+  mutate(
+    Col_dog = ifelse(str_detect(Dog$Color, "White"), "White",
+                       ifelse(str_detect(Dog$Color, "Black"), "Black",
+                              ifelse(str_detect(Dog$Color, "Tan"), "Tan",
+                                     ifelse(str_detect(Dog$Color, "Brown"), "Brown",
+                                            "Others"))))
+    )
+
+Dog[Not_NA_dog,] %>%
+  group_by(Col_dog) %>%
+  summarize(count = n(), prob = mean(Outcome == 1))
 
 ## 2.10 Put them together
 adoption <- shelter %>%
@@ -547,7 +596,7 @@ summary(resamps, metric = "Accuracy")
 bwplot(resamps, metric = "Accuracy")
 # From the plot, it's reasonable to say that XGBoost performs best.
 
-## 6.7 Advanced Modeling: Stacking
+## 6.7 Advanced Modeling: Ensemble/Stacking
 #stackControl <- trainControl(
 #  method = "boot",
 #  number = 25,
