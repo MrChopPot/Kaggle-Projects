@@ -398,8 +398,16 @@ Dog[Not_NA_dog,] %>%
 
 ## 2.10 Put them together
 adoption <- shelter %>%
-  dplyr::select(11:12, 15, 17, 19:27, 10)
+  dplyr::select(11:27, 10)
 glimpse(adoption)
+
+cat_adoption <- Cat %>%
+  dplyr::select(11:29, 10)
+glimpse(cat_adoption)
+
+dog_adoption <- Dog %>%
+  dplyr::select(11:29, 10)
+glimpse(dog_adoption)
 
 
 ### 3. Exploratory Data Analysis
@@ -471,8 +479,28 @@ ggplot(adoption[tv_row,], aes(x = Tabby, y = ..count.., fill = Outcome)) +
   scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)")) +
   facet_wrap(~Type)
 
+ggplot(cat_adoption[Not_NA_cat,], aes(x = Hair, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Hair(Cat) VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
+
+ggplot(cat_adoption[Not_NA_cat,], aes(x =Col_cat, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Col_cat(Cat) VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
+
+ggplot(dog_adoption[Not_NA_dog,], aes(x = Size, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Size(Dog) VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
+
+ggplot(dog_adoption[Not_NA_cat,], aes(x =Col_dog, y = ..count.., fill = Outcome)) +
+  geom_bar(stat = "count", position = "fill") +
+  ggtitle("Col_dog(Dog) VS. Outcome") +
+  scale_fill_discrete(labels=c("0 (Not Adpoted)", "1 (Adopted)"))
+
 ### 4. Missing Value Detection & Imputation
-## 4.1 Missing Report
+## 4.1 Missing Report(including anomaly)
 adoption %>%
   mutate(Age = ifelse(adoption$Age == 0, NA, adoption$Age),
          Sex = ifelse(adoption$Sex == "Unknown", NA, adoption$Sex),
@@ -489,12 +517,17 @@ adoption %>%
 # 4.3.2 Sex & Intact
 # Because there seems like strong rules exists, so we just leave the NA's as "Unknown"
 
+
 ### 5. Feature Selection
 lapply(adoption[tv_row,], function(x) IV(as.factor(x), adoption$Outcome[tv_row]))
 
+lapply(cat_adoption[Not_NA_cat,], function(x) IV(as.factor(x), cat_adoption$Outcome[Not_NA_cat]))
+lapply(dog_adoption[Not_NA_dog,], function(x) IV(as.factor(x), dog_adoption$Outcome[Not_NA_dog]))
+
 adopt <- adoption %>%
-  dplyr::select(c(1:6, 8:11, 14))
+  dplyr::select(c(1,5,7,9,10,12,13,18)) ###!!! according to what? Sense or Results?
   
+
 ### 6. Modeling (Building & CV & Hyper-tuning)
 ## 6.1 Fit Control for Hyper-Tuning
 fitControl <- trainControl(method = "repeatedcv", 
@@ -505,8 +538,8 @@ fitControl <- trainControl(method = "repeatedcv",
 ## 6.2 rpart Missing Imputation
 Age_NA <- which(adopt$Age == 0)
 
-training <- adopt[-Age_NA, -11]
-testing <- adopt[Age_NA, -11]
+training <- adopt[-Age_NA, -8]
+testing <- adopt[Age_NA, -8]
 
 tic()
 mod_imp <- train(Age ~., training, 
@@ -525,6 +558,8 @@ temp <- adopt[tv_row, ]
 dmy <- dummyVars(~ ., data = temp[,-ncol(temp)])
 dmy_data <- data.frame(predict(dmy, newdata = temp[,-ncol(temp)]))
 dmy_data <- bind_cols(dmy_data, temp[,ncol(temp)])
+
+levels(dmy_data$Outcome) <- c("Not_Adopted", "Adopted")
 
 ## 6.4 Stratified Sampling
 index <- createDataPartition(dmy_data$Outcome, p = .70, list = FALSE)
@@ -597,51 +632,45 @@ bwplot(resamps, metric = "Accuracy")
 # From the plot, it's reasonable to say that XGBoost performs best.
 
 ## 6.7 Advanced Modeling: Ensemble/Stacking
-#stackControl <- trainControl(
-#  method = "boot",
-#  number = 25,
-#  savePredictions = "final",
-#  classProbs = TRUE,
-#  index = createResample(dmy_data[index,]$Outcome, 25),
-#  summaryFunction = twoClassSummary
-#)
-#
-#tic()
-#model_list <- caretList(
-#  Outcome ~ ., data = dmy_data[index,],
-#  trControl = stackControl,
-#  methodList = c("xgbTree", "rf", "svmRadial", "nnet")
-#)
-#
-#greedy_ensemble <- caretEnsemble(
-#  model_list, 
-#  metric="ROC",
-#  trControl=trainControl(
-#    number=2,
-#    summaryFunction=twoClassSummary,
-#    classProbs=TRUE
-#  ))
-#
-#summary(greedy_ensemble)
-#toc()
+stackControl <- trainControl(
+  method = "boot",
+  number = 25,
+  savePredictions = "final",
+  classProbs=TRUE,
+  index = createResample(dmy_data[index,]$Outcome, 25)
+)
 
-#gbm_ensemble <- caretStack(
-#  model_list,
-#  method="gbm",
-#  verbose=FALSE,
-#  tuneLength=10,
-#  metric="ROC",
-#  trControl=trainControl(
-#    method="boot",
-#    number=10,
-#    savePredictions="final",
-#    classProbs=TRUE,
-#    summaryFunction=twoClassSummary
-#  )
-#)
+tic()
+model_list <- caretList(
+  Outcome ~ ., data = dmy_data[index,],
+  trControl = stackControl,
+  methodList = c("xgbTree", "rf", "svmRadial", "nnet")
+)
 
-#pred5 <- predict(gbm_ensemble, dmy_data[-index,], type = "raw")
-#caret::confusionMatrix(pred5, dmy_data[-index,]$Outcome, mode = "prec_recall")
+toc()
+
+gbm_ensemble <- caretStack(
+  model_list,
+  method="gbm",
+  verbose=FALSE,
+  tuneLength=10,
+  trControl=trainControl(
+    method="boot",
+    number=10,
+    savePredictions="final",
+    classProbs=TRUE
+  )
+)
+
+pred5 <- predict(gbm_ensemble, dmy_data[-index,], type = "raw")
+caret::confusionMatrix(pred5, dmy_data[-index,]$Outcome, mode = "prec_recall")
+
+model_preds <- 
+  lapply(model_list, predict, newdata = dmy_data[-index,], type = "raw")
+conf_matrix <- 
+  lapply(model_preds, caret::confusionMatrix, dmy_data[-index,]$Outcome, mode = "prec_recall")
+
+#as.numeric(tidy(conf_matrix[1]$xgbTree)[9, 3])
 
 ## 6.8 Model choosing: F1
 # This plan is used to help determine which animals we want to keep. 
